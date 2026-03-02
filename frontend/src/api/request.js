@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: 'http://localhost:8080',
+  baseURL: 'http://https://animated-telegram-wx74w5g7q64fv4r4-8000.app.github.dev/',
   timeout: 30000
 })
 
