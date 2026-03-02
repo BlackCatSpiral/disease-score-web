@@ -1,18 +1,29 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import or_
 from typing import Optional
 from database import get_db, DiseaseScore
-from models import (
-    DiseaseScoreCreate, 
-    DiseaseScoreUpdate, 
-    DiseaseScoreResponse,
-    SearchRequest
-)
 
 router = APIRouter(prefix="/records", tags=["记录管理"])
 
-@router.get("/", response_model=dict)
+def to_dict(obj):
+    """把 SQLAlchemy 对象转成字典"""
+    return {
+        "id": obj.id,
+        "charge_category": obj.charge_category,
+        "charge_item_code": obj.charge_item_code,
+        "item_name": obj.item_name,
+        "province": obj.province,
+        "city": obj.city,
+        "original_price": obj.original_price,
+        "discount_price": obj.discount_price,
+        "project_score": obj.project_score,
+        "remark": obj.remark,
+        "create_time": obj.create_time.isoformat() if obj.create_time else None,
+        "update_time": obj.update_time.isoformat() if obj.update_time else None,
+    }
+
+@router.get("/")
 def get_records(
     keyword: Optional[str] = None,
     page: int = Query(1, ge=1),
@@ -22,7 +33,6 @@ def get_records(
     """获取记录列表，支持搜索"""
     query = db.query(DiseaseScore)
     
-    # 搜索条件
     if keyword:
         like_pattern = f"%{keyword}%"
         query = query.filter(
@@ -35,7 +45,6 @@ def get_records(
             )
         )
     
-    # 分页
     total = query.count()
     records = query.order_by(DiseaseScore.id).offset((page - 1) * page_size).limit(page_size).all()
     
@@ -43,57 +52,54 @@ def get_records(
         "total": total,
         "page": page,
         "page_size": page_size,
-        "data": records
+        "data": [to_dict(r) for r in records]
     }
 
-@router.get("/{record_id}", response_model=DiseaseScoreResponse)
+@router.get("/{record_id}")
 def get_record(record_id: int, db: Session = Depends(get_db)):
     """获取单条记录"""
     record = db.query(DiseaseScore).filter(DiseaseScore.id == record_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
-    return record
+    return to_dict(record)
 
-@router.post("/", response_model=DiseaseScoreResponse)
-def create_record(record: DiseaseScoreCreate, db: Session = Depends(get_db)):
+@router.post("/")
+def create_record(record: dict, db: Session = Depends(get_db)):
     """创建记录"""
-    # 检查编码是否已存在
     existing = db.query(DiseaseScore).filter(
-        DiseaseScore.charge_item_code == record.charge_item_code
+        DiseaseScore.charge_item_code == record.get("charge_item_code")
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="收费项目编码已存在")
     
-    db_record = DiseaseScore(**record.dict())
+    db_record = DiseaseScore(**record)
     db.add(db_record)
     db.commit()
     db.refresh(db_record)
-    return db_record
+    return to_dict(db_record)
 
-@router.put("/{record_id}", response_model=DiseaseScoreResponse)
-def update_record(record_id: int, record: DiseaseScoreUpdate, db: Session = Depends(get_db)):
+@router.put("/{record_id}")
+def update_record(record_id: int, record: dict, db: Session = Depends(get_db)):
     """更新记录"""
     db_record = db.query(DiseaseScore).filter(DiseaseScore.id == record_id).first()
     if not db_record:
         raise HTTPException(status_code=404, detail="记录不存在")
     
-    # 检查编码是否与其他记录冲突
-    if record.charge_item_code:
+    if record.get("charge_item_code"):
         existing = db.query(DiseaseScore).filter(
-            DiseaseScore.charge_item_code == record.charge_item_code,
+            DiseaseScore.charge_item_code == record["charge_item_code"],
             DiseaseScore.id != record_id
         ).first()
         if existing:
             raise HTTPException(status_code=400, detail="收费项目编码已存在")
     
-    # 更新字段
-    update_data = record.dict(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_record, key, value)
+    for key, value in record.items():
+        if hasattr(db_record, key):
+            setattr(db_record, key, value)
     
     db.commit()
     db.refresh(db_record)
-    return db_record
+    return to_dict(db_record)
 
 @router.delete("/{record_id}")
 def delete_record(record_id: int, db: Session = Depends(get_db)):
